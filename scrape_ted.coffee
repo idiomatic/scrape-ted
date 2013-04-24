@@ -95,7 +95,7 @@ class ScrollPredictingWriter extends events.EventEmitter
                         cb(Math.max(0, newLineCount(message, width, before_x) + before_y - after_y))
             , (scrolls) =>
                 @emit('scroll', scrolls) if scrolls > 0
-                cb()
+                cb?()
 
 write = new ScrollPredictingWriter()
     .on('scroll', (n) -> scrollBars(-n))
@@ -177,7 +177,7 @@ class Talk
             (cb) =>
                 clean = (s) ->
                     s.replace(/[: \/]+/g, ' ')
-                @dest_path = "TEDTalks #{pad right:@id, width:4, padding='0'} #{clean @title} (#{clean @event_name}).mp4"
+                @dest_path = "TEDTalks #{pad right:@id, width:4, padding:'0'} #{clean @title} (#{clean @event_name}).mp4"
                 fs.exists @dest_path, (exists) =>
                     exists and= new Error("#{@dest_path} already exists")
                     cb(exists)
