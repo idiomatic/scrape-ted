@@ -1,4 +1,5 @@
 #!/usr/local/bin/coffee
+# download TED talks in parallel
 #
 # the iteratable URL
 #     http://www.ted.com/talks/view/id/#{id}
@@ -105,7 +106,7 @@ class Progress extends stream.Transform
     constructor: (options) ->
         super(options)
         { @id, @title } = options
-        # adjust upon reading HTTP headers
+        # adjust content_length upon reading HTTP headers
         @content_length = 0
         @cumulative_length = 0
         @on 'end', =>
@@ -156,7 +157,7 @@ class Talk
                 @event_name = window.document.getElementsByClassName('event-name')?[0]?.textContent or @default_event
                 for script in window.document.getElementsByTagName('script')
                     if script.textContent.match(/talkDetails/)
-                        # slighly scary way to parse talkDetails JavaScript
+                        # slighly scary way to parse talkDetails from JavaScript
                         eval(script.textContent)
                         { mediaSlug } = talkDetails
                         @media_slug = mediaSlug
@@ -166,8 +167,6 @@ class Talk
     videoStream: (cb) =>
         url = "http://download.ted.com/talks/#{@media_slug}-#{@bitrate}.mp4?apikey=TEDDOWNLOAD"
         req = request.get(url)
-        #req.on 'response', (res) =>
-        #    @content_length = parseInt(res.headers['content-length'], 10)
         req.end()
         cb?(false, req)
 
@@ -199,10 +198,10 @@ class Talk
                 charm.erase('line')
             cb?(err)
 
-q = async.queue (task, cb) ->
+download = async.queue (task, cb) ->
     task(cb)
 , 3
-q.drain = () ->
+download.drain = () ->
     setTimeout ->
         process.exit()
     , 100
@@ -212,8 +211,8 @@ for arg in process.argv[2..]
     if match
         [ _, start, end ] = match
         for i in [parseInt(start, 10)..parseInt(end, 10)]
-            q.push(new Talk(i).fetch)
+            download.push(new Talk(i).fetch)
     else if arg.match(/^\d+$/)
-        q.push(new Talk(parseInt(arg, 10)).fetch)
+        download.push(new Talk(parseInt(arg, 10)).fetch)
     else
         console.log "Usage: scrape_ted [ { TALK_ID | START_TALK_ID-END_TALK_ID } ... ]"

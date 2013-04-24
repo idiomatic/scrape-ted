@@ -1,0 +1,32 @@
+{
+    "name": "scrape-ted",
+    "version": "1.0.0",
+    "description": "Download TED videos in parallel.  Use at your own risk.",
+    "author": {
+	"name": "brian harrison",
+	"email": "brian@rbrian.com"
+    },
+    "repository": {
+	"type": "git",
+	"url": "https://github.com/idiomatic/scrape-ted.git"
+    },
+    "bugs": "https://github.com/idiomatic/scrape-ted/issues",
+    "main": "scrape_ted.coffee",
+    "scripts": {
+	"start": "coffee scrape_ted.coffee 1-14 16 18-1740"
+    },
+    "bin": {
+	"scrape_ted": "./scrape_ted.coffee"
+    },
+    "dependencies": {
+	"async": "~0.2",
+	"coffee-script": "~1.3",
+	"jsdom": "~0.6",
+	"request": "~2.20",
+	"multimeter": "~0.1"
+    },
+    "engines": {
+	"node": "~0.10"
+    },
+    "license": "MIT"
+}
