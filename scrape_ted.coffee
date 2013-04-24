@@ -14,6 +14,8 @@
 #     http://download.ted.com/talks/#{mediaSlug}-#{quality}.mp4?apikey=TEDDOWNLOAD
 
 fs = require 'fs'
+stream = require 'stream'
+events = require 'events'
 util = require 'util'
 async = require 'async'
 jsdom = require 'jsdom'
@@ -21,40 +23,122 @@ request = require 'request'
 multimeter = require 'multimeter'
 #emitter.setMaxListeners
 
-clean = (s) ->
-    s.replace(/[: \/]+/g, ' ')
+toMegs = (bytes) ->
+    (bytes / 1000000).toFixed(1)
 
-megs = (b) ->
-    (b / 1000000).toFixed(1)
-
-#zeropad = (v, w) -> (v + 1e15 + '').slice(-w)
-pad = (v, width, padding='0') ->
-    if v < 0
-        '-' + pad(-v, width - 1, padding)
+pad = ({left, right, width, padding}) ->
+    left ?= ''
+    right ?= ''
+    width ?= 80
+    padding ?= ' '
+    if right < 0
+        pad(left + '-', -right, width, padding)
     else
-        Array(width).join(padding).substring("#{v}".length - 1, width - 1) + v
-
-pad2 = (v, width, padchar='0', prefix='') ->
-    if v < 0
-        pad -v, width - 1, padchar, prefix + '-'
-    else if (prefix + v).length >= width
-        prefix + v
-    else
-        pad(padchar + v, width, padchar, prefix)
+        filler = Array(width).join(padding).substring(left.length + right.length - 1, width - 1)
+        (left + filler + right).substring(0, width)
 
 multi = multimeter(process)
+{ charm } = multi
 multi.on '^C', () ->
-    multi.charm.write '\n'
+    charm.write('\n')
 
+# reposition active multimeter bars
 scrollBars = (dy, dx) ->
     for bar in multi.bars
         bar.y += (dy or 0)
         bar.x += (dx or 0)
 
+# forget about a bar
 closeBar = (bar) ->
-    i = multi.bars.indexOf bar
+    i = multi.bars.indexOf(bar)
     if i >= 0
         multi.bars.splice(i, 1)
+
+# screen serializer
+screen = async.queue (task, cb) ->
+    task cb
+, 1
+
+# cursor-preserving screen task
+excursion = (task, cb) ->
+    screen.push (cb) ->
+        charm.position (before_x, before_y) ->
+            task (args...) ->
+                charm.position(before_x, before_y)
+                cb(args...)
+    , cb
+
+# get coordinates of extreme bottom right cursor position
+screenSize = (cb) ->
+    excursion (cb) ->
+        charm.move(9999, 9999)
+        charm.position cb
+    , cb
+
+# measure dy of this message
+newLineCount = (message, screen_width=80, cursor_x=1) ->
+    lines = message.split('\n')
+    add = (a, b) -> a + b
+    # XXX add cursor_x to first line
+    (Math.floor(line.length / screen_width) for line in lines)
+        .reduce(add, lines.length - 1)
+
+# upon each linefeed at bottom of screen, emit 'scroll'
+class ScrollPredictingWriter extends events.EventEmitter
+    write: (message, cb) =>
+        screenSize (width, height) =>
+            screen.push (cb) ->
+                charm.position (before_x, before_y) ->
+                    charm.write(message)
+                    charm.erase('end')
+                    charm.position (_, after_y) ->
+                        cb(Math.max(0, newLineCount(message, width, before_x) + before_y - after_y))
+            , (scrolls) =>
+                @emit('scroll', scrolls) if scrolls > 0
+                cb()
+
+write = new ScrollPredictingWriter()
+    .on('scroll', (n) -> scrollBars(-n))
+    .write
+
+class Progress extends stream.Transform
+    constructor: (options) ->
+        super(options)
+        { @id, @title } = options
+        # adjust upon reading HTTP headers
+        @content_length = 0
+        @cumulative_length = 0
+        @on 'end', =>
+            #process.nextTick =>
+            excursion (cb) =>
+                charm.position(@bar.x, @bar.y)
+                charm.erase('line')
+                @bar.after = "] #{@id}: #{@title.substring 0, 54}"
+                @bar.solid =
+                    background: 'white'
+                    foreground: 'black'
+                    text: '='
+                @bar.draw(@bar.width, '')
+                closeBar(@bar)
+                cb()
+    drop: (cb) =>
+        bar_options =
+            width: 16
+            before: '['
+            after: "] #{@id}: #{pad left:@title, width:40}  "
+            text: '='
+        multi.drop bar_options, (@bar) =>
+            write('\n')
+            charm.erase('line')
+            cb?()
+    _transform: (chunk, encoding, cb) =>
+        @cumulative_length += chunk.length
+        if @content_length > 0
+            n = toMegs(@cumulative_length)
+            d = toMegs(@content_length)
+            @bar?.ratio(n, d, "#{n} of #{d}M")
+        @push(chunk)
+        cb()
 
 class Talk
     constructor: (@id) ->
@@ -65,14 +149,15 @@ class Talk
         request.get "http://www.ted.com/talks/view/id/#{@id}", (err, res, body) =>
             return cb?(err) if err
             return cb?(new Error("HTTP status #{res.statusCode}")) if res.statusCode >= 400
-            jsdom.env html:body, (err, window) =>
+            jsdom.env html: body, (err, window) =>
                 return cb?(err) if err
-                @title = (window.document.getElementsByTagName 'title')?[0]?.textContent or @default_title
+                @title = window.document.getElementsByTagName('title')?[0]?.textContent or @default_title
                 @title = @title.replace(/\s*\|.*/, '')
-                @event_name = (window.document.getElementsByClassName 'event-name')?[0]?.textContent or @default_event
-                for script in window.document.getElementsByTagName 'script'
-                    if script.textContent.match /talkDetails/
-                        eval script.textContent
+                @event_name = window.document.getElementsByClassName('event-name')?[0]?.textContent or @default_event
+                for script in window.document.getElementsByTagName('script')
+                    if script.textContent.match(/talkDetails/)
+                        # slighly scary way to parse talkDetails JavaScript
+                        eval(script.textContent)
                         { mediaSlug } = talkDetails
                         @media_slug = mediaSlug
                         break
@@ -80,71 +165,55 @@ class Talk
 
     videoStream: (cb) =>
         url = "http://download.ted.com/talks/#{@media_slug}-#{@bitrate}.mp4?apikey=TEDDOWNLOAD"
-        req = request.get url
-        req.on 'response', (res) =>
-            @content_length = parseInt(res.headers['content-length'])
+        req = request.get(url)
+        #req.on 'response', (res) =>
+        #    @content_length = parseInt(res.headers['content-length'], 10)
         req.end()
         cb?(false, req)
-
-    progressMeter: (res, cb) =>
-        @cumulative_length = 0
-        res.on 'data', (data) =>
-            @cumulative_length += data.length
-        multi.drop width:16, before:'[', after:"] #{@id}: #{@title.substring 0, 40} ", text:'=', (bar) =>
-            res.on 'data', (data) =>
-                bar.ratio megs(@cumulative_length), megs(@content_length)
-            res.on 'end', () =>
-                process.nextTick =>
-                    bar.after = "] #{@id}: #{@title.substring 0, 54}"
-                    bar.solid =
-                        background: 'white'
-                        foreground: 'black'
-                        text: '='
-                    bar.draw bar.width, ''
-                    closeBar bar
-            multi.charm.write('\n')
-            multi.charm.position (previous_x, previous_y) =>
-                if bar.y == previous_y
-                    scrollBars(-1)
-                    multi.charm.erase('line')
-                cb?(false, res)
 
     fetch: (cb) =>
         async.waterfall [
             @fetchDetails
             (cb) =>
-                @dest_path = "TEDTalks #{pad @id, 4} #{clean @title} (#{clean @event_name}).mp4"
+                clean = (s) ->
+                    s.replace(/[: \/]+/g, ' ')
+                @dest_path = "TEDTalks #{pad right:@id, width:4, padding='0'} #{clean @title} (#{clean @event_name}).mp4"
                 fs.exists @dest_path, (exists) =>
                     exists and= new Error("#{@dest_path} already exists")
                     cb(exists)
             @videoStream
             (req, cb) =>
                 req.on 'response', (res) =>
-                    cb(false, res)
-                req.on 'error', cb
-                req.pipe fs.createWriteStream @dest_path
-            @progressMeter
+                    progress.content_length = parseInt(res.headers['content-length'], 10)
+                    progress.drop =>
+                        cb(false, res)
+                req.on('error', cb)
+                progress = new Progress({@id, @title})
+                req.pipe(progress).pipe(fs.createWriteStream(@dest_path))
             (res, cb) =>
-                res.on 'error', cb
-                res.on 'end', cb
+                res.on('error', cb)
+                res.on('end', cb)
         ], (err) =>
             if err
-                scrollBars(-1 * Math.ceil(err.length / 80))
-                multi.charm.write "#{err}\n"
+                write("#{err}\n")
+                charm.erase('line')
             cb?(err)
 
 q = async.queue (task, cb) ->
-    task cb
+    task(cb)
 , 3
 q.drain = () ->
-    process.nextTick ->
+    setTimeout ->
         process.exit()
+    , 100
 
 for arg in process.argv[2..]
-    match = arg.match /^(\d+)-(\d+)$/
+    match = arg.match(/^(\d+)-(\d+)$/)
     if match
         [ _, start, end ] = match
         for i in [parseInt(start, 10)..parseInt(end, 10)]
-            q.push new Talk(i).fetch
-    else if arg.match /^\d+$/
-        q.push new Talk(parseInt(arg, 10)).fetch
+            q.push(new Talk(i).fetch)
+    else if arg.match(/^\d+$/)
+        q.push(new Talk(parseInt(arg, 10)).fetch)
+    else
+        console.log "Usage: scrape_ted [ { TALK_ID | START_TALK_ID-END_TALK_ID } ... ]"
