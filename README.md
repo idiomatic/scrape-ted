@@ -1,6 +1,10 @@
 scrape-ted
 ==========
 
+![Screen1](/images/screen1.png)
+
+![Screen1](/images/screen2.png)
+
 Installation
 ------------
 
