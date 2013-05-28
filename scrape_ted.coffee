@@ -122,6 +122,7 @@ class Progress extends stream.Transform
                 @bar.draw(@bar.width, '')
                 closeBar(@bar)
                 cb()
+
     drop: (cb) =>
         bar_options =
             width: 16
@@ -132,6 +133,7 @@ class Progress extends stream.Transform
             write('\n')
             charm.erase('line')
             cb?()
+
     _transform: (chunk, encoding, cb) =>
         @cumulative_length += chunk.length
         if @content_length > 0
@@ -146,16 +148,17 @@ class Talk
         @default_title = 'Untitled'
         @default_event = 'TED'
         @bitrate = '1500k'
+
     fetchDetails: (cb) =>
         request.get "http://www.ted.com/talks/view/id/#{@id}", (err, res, body) =>
             return cb?(err) if err
             return cb?(new Error("HTTP status #{res.statusCode}")) if res.statusCode >= 400
-            jsdom.env html: body, (err, window) =>
+            jsdom.env html: body, (err, {document}) =>
                 return cb?(err) if err
-                @title = window.document.getElementsByTagName('title')?[0]?.textContent or @default_title
+                @title = document.getElementsByTagName('title')?[0]?.textContent or @default_title
                 @title = @title.replace(/\s*\|.*/, '')
-                @event_name = window.document.getElementsByClassName('event-name')?[0]?.textContent or @default_event
-                for script in window.document.getElementsByTagName('script')
+                @event_name = document.getElementsByClassName('event-name')?[0]?.textContent or @default_event
+                for script in document.getElementsByTagName('script')
                     if script.textContent.match(/talkDetails/)
                         # slighly scary way to parse talkDetails from JavaScript
                         eval(script.textContent)
