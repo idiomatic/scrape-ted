@@ -155,9 +155,9 @@ class Talk
             return cb?(new Error("HTTP status #{res.statusCode}")) if res.statusCode >= 400
             jsdom.env html: body, (err, {document}) =>
                 return cb?(err) if err
-                @title = document.getElementsByTagName('title')?[0]?.textContent or @default_title
+                @title = document.getElementsByTagName('title')?[0]?.textContent.trim() or @default_title
                 @title = @title.replace(/\s*\|.*/, '')
-                @event_name = document.getElementsByClassName('event-name')?[0]?.textContent or @default_event
+                @event_name = document.getElementsByClassName('event-name')?[0]?.textContent.trim() or @default_event
                 for script in document.getElementsByTagName('script')
                     if script.textContent.match(/talkDetails/)
                         # slighly scary way to parse talkDetails from JavaScript
