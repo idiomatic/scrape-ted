@@ -35,7 +35,7 @@ pad = ({left, right, width, padding}) ->
     if right < 0
         pad(left + '-', -right, width, padding)
     else
-        filler = Array(width).join(padding).substring(left.length + right.length - 1, width - 1)
+        filler = Array(width).join(padding).substring(left.toString().length + right.toString().length - 1, width - 1)
         (left + filler + right).substring(0, width)
 
 multi = multimeter(process)
@@ -106,15 +106,15 @@ class Progress extends stream.Transform
     constructor: (options) ->
         super(options)
         { @id, @title } = options
+        @screen_width = 80
         # adjust content_length upon reading HTTP headers
         @content_length = 0
         @cumulative_length = 0
         @on 'end', =>
-            #process.nextTick =>
             excursion (cb) =>
                 charm.position(@bar.x, @bar.y)
                 charm.erase('line')
-                @bar.after = "] #{@id}: #{@title.substring 0, 54}"
+                @bar.after = "] #{pad right:@id, width:4, padding:'0'} #{@title.substring 0, @screen_width - 26}"
                 @bar.solid =
                     background: 'white'
                     foreground: 'black'
@@ -127,7 +127,7 @@ class Progress extends stream.Transform
         bar_options =
             width: 16
             before: '['
-            after: "] #{@id}: #{pad left:@title, width:40}  "
+            after: "] #{pad right:@id, width:4, padding:'0'} #{pad left:@title, width:@screen_width - 42}"
             text: '='
         multi.drop bar_options, (@bar) =>
             write('\n')
@@ -139,7 +139,7 @@ class Progress extends stream.Transform
         if @content_length > 0
             n = toMegs(@cumulative_length)
             d = toMegs(@content_length)
-            @bar?.ratio(n, d, "#{n} of #{d}M")
+            @bar?.ratio(n, d, "(#{n} of #{d}M)")
         @push(chunk)
         cb()
 
@@ -203,7 +203,7 @@ class Talk
 
 download = async.queue (task, cb) ->
     task(cb)
-, 3
+, 1
 download.drain = () ->
     setTimeout ->
         process.exit()
