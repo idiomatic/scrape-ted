@@ -191,11 +191,15 @@ class Talk
                     progress.content_length = parseInt(res.headers['content-length'], 10)
                     progress.drop =>
                         cb(false, res)
-                req.on('error', cb)
+                req.on 'error', (err) ->
+                    console.log "error: #{err}"
+                    process.exit 1
                 progress = new Progress({@id, @title})
                 req.pipe(progress).pipe(fs.createWriteStream(@dest_path))
             (res, cb) =>
-                res.on('error', cb)
+                res.on 'error', (err) ->
+                    console.log "error: #{err}"
+                    process.exit 1
                 res.on('end', cb)
         ], (err) =>
             if err
