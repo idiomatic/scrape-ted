@@ -78,13 +78,13 @@ class Talk
                 return cb?(err) if err
                 @title = document.getElementsByTagName('title')?[0]?.textContent.trim() or @default_title
                 @title = @title.replace(/\s*\|.*/, '')
-                @event_name = document.getElementsByClassName('event-name')?[0]?.textContent.trim() or @default_event
                 for script in document.getElementsByTagName('script')
                     if script.textContent.match(/^q\("talkPage.init",/)
                         # slighly scary way to parse talk details from JavaScript
                         { talks } = eval("function q(a,b){return b;}" + script.textContent)
                         { high } = talks[0].nativeDownloads
                         @media_slug = high.match(/\/talks\/(.*?)(?:-480p)?\.mp4/)[1]
+                        @event_name = talks[0].event
                         break
                 cb?(false)
 
