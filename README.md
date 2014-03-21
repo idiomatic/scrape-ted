@@ -1,24 +1,25 @@
 scrape-ted
 ==========
 
-![Screen1](/images/screen1.png)
-
-![Screen1](/images/screen2.png)
-
 Installation
 ------------
 
     npm install
 
 
+Setup
+-----
+
+    PATH=node_modules/.bin:$PATH
+
 Usage
 -----
 
-    scrape_ted TALKID
+    coffee scrape_ted.coffee TALKID
 
 or
 
-    scrape_ted STARTTALKID-ENDTALKID
+    coffee scrape_ted.coffee STARTTALKID-ENDTALKID
 
 
 Warning
