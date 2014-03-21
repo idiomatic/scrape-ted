@@ -13,7 +13,7 @@
     "bugs": "https://github.com/idiomatic/scrape-ted/issues",
     "main": "scrape_ted.coffee",
     "scripts": {
-	"start": "coffee scrape_ted.coffee 1-14 16 18-1740"
+	"start": "coffee scrape_ted.coffee 1-14 16 18-1935"
     },
     "bin": {
 	"scrape_ted": "./scrape_ted.coffee"
