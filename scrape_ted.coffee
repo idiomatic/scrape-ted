@@ -139,7 +139,9 @@ class Progress extends stream.Transform
         if @content_length > 0
             n = toMegs(@cumulative_length)
             d = toMegs(@content_length)
-            @bar?.ratio(n, d, "(#{n} of #{d}M)")
+            if new Date().getTime() - (@last_update or 0) > 100
+                @bar?.ratio(n, d, "(#{n} of #{d}M)")
+                @last_update = new Date().getTime()
         @push(chunk)
         cb()
 
