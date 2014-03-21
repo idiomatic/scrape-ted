@@ -22,6 +22,8 @@ jsdom = require 'jsdom'
 request = require 'request'
 #emitter.setMaxListeners
 
+concurrency = 5
+
 toMegs = (bytes) ->
     (bytes / 1000000).toFixed(1)
 
@@ -56,7 +58,7 @@ class Progress extends stream.Transform
 
     _transform: (chunk, encoding, cb) =>
         @cumulative_length += chunk.length
-        if @content_length > 0
+        if @content_length > 0 and concurrency is 1
             next_status = @status()
             if @last_status isnt next_status
                 process.stdout.write("\r#{next_status}")
@@ -82,8 +84,9 @@ class Talk
                     if script.textContent.match(/^q\("talkPage.init",/)
                         # slighly scary way to parse talk details from JavaScript
                         { talks } = eval("function q(a,b){return b;}" + script.textContent)
-                        { high } = talks[0].nativeDownloads
-                        @media_slug = high.match(/\/talks\/(.*?)(?:-480p)?\.mp4/)[1]
+                        file = talks[0]?.nativeDownloads.high
+                        file or= talks[0]?.resources.h264[0].file
+                        @media_slug = file.match(/\/talks\/(.*?)(?:-480p)?\.mp4/)[1]
                         @event_name = talks[0].event
                         break
                 cb?(false)
@@ -110,7 +113,8 @@ class Talk
                     progress.content_length = parseInt(res.headers['content-length'], 10)
                 req.on 'error', cb
                 progress = new Progress({@id, @title})
-                req.pipe(progress).pipe(fs.createWriteStream("#{@dest_path}.new"))
+                req.pipe(progress)
+                    .pipe(fs.createWriteStream("#{@dest_path}.new"))
                     .on 'finish', cb
                     .on 'error', cb
             (cb) =>
@@ -123,11 +127,7 @@ class Talk
 
 download = async.queue (task, cb) ->
     task(cb)
-, 1
-download.drain = () ->
-    setTimeout ->
-        process.exit()
-    , 100
+, concurrency
 
 for arg in process.argv[2..]
     match = arg.match(/^(\d+)-(\d+)$/)
