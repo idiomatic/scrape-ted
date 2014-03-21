@@ -1,16 +1,15 @@
 #!/usr/local/bin/coffee
-# download TED talks in parallel
+# download TED talks
 #
 # the iteratable URL
 #     http://www.ted.com/talks/view/id/#{id}
 # redirects to
 #     http://www.ted.com/talks/#{slug}.html
 # which provides in JavaScript
-#     talkDetails.id = id
-#     talkDetails.mediaSlug = "#{speaker}_#{eventid}"
-#     talkDetails.htmlStreams[1] =
-#         id:'high'
-#         file:"http://download.ted.com/talks/#{mediaSlug}-950k.mp4?apikey=TEDDOWNLOAD"
+#     q(event, data)
+# which contains
+#     data.talks[0].nativeDownloads.high =
+#       "http://download.ted.com/talks/#{mediaSlug}-480p.mp4?apikey=TEDDOWNLOAD"
 # leading to final product
 #     http://download.ted.com/talks/#{mediaSlug}-#{quality}.mp4?apikey=TEDDOWNLOAD
 
@@ -21,7 +20,6 @@ util = require 'util'
 async = require 'async'
 jsdom = require 'jsdom'
 request = require 'request'
-multimeter = require 'multimeter'
 #emitter.setMaxListeners
 
 toMegs = (bytes) ->
@@ -32,75 +30,10 @@ pad = ({left, right, width, padding}) ->
     right ?= ''
     width ?= 80
     padding ?= ' '
-    if right < 0
-        pad(left + '-', -right, width, padding)
-    else
-        filler = Array(width).join(padding).substring(left.toString().length + right.toString().length - 1, width - 1)
-        (left + filler + right).substring(0, width)
-
-multi = multimeter(process)
-{ charm } = multi
-multi.on '^C', () ->
-    charm.write('\n')
-
-# reposition active multimeter bars
-scrollBars = (dy, dx) ->
-    for bar in multi.bars
-        bar.y += (dy or 0)
-        bar.x += (dx or 0)
-
-# forget about a bar
-closeBar = (bar) ->
-    i = multi.bars.indexOf(bar)
-    if i >= 0
-        multi.bars.splice(i, 1)
-
-# screen serializer
-screen = async.queue (task, cb) ->
-    task cb
-, 1
-
-# cursor-preserving screen task
-excursion = (task, cb) ->
-    screen.push (cb) ->
-        charm.position (before_x, before_y) ->
-            task (args...) ->
-                charm.position(before_x, before_y)
-                cb(args...)
-    , cb
-
-# get coordinates of extreme bottom right cursor position
-screenSize = (cb) ->
-    excursion (cb) ->
-        charm.move(9999, 9999)
-        charm.position cb
-    , cb
-
-# measure dy of this message
-newLineCount = (message, screen_width=80, cursor_x=1) ->
-    lines = message.split('\n')
-    add = (a, b) -> a + b
-    # XXX add cursor_x to first line
-    (Math.floor(line.length / screen_width) for line in lines)
-        .reduce(add, lines.length - 1)
-
-# upon each linefeed at bottom of screen, emit 'scroll'
-class ScrollPredictingWriter extends events.EventEmitter
-    write: (message, cb) =>
-        screenSize (width, height) =>
-            screen.push (cb) ->
-                charm.position (before_x, before_y) ->
-                    charm.write(message)
-                    charm.erase('end')
-                    charm.position (_, after_y) ->
-                        cb(Math.max(0, newLineCount(message, width, before_x) + before_y - after_y))
-            , (scrolls) =>
-                @emit('scroll', scrolls) if scrolls > 0
-                cb?()
-
-write = new ScrollPredictingWriter()
-    .on('scroll', (n) -> scrollBars(-n))
-    .write
+    filler = Array(width + 1)
+        .join(padding)
+        .substr(left.toString().length, width - right.toString().length)
+    (left + filler + right).substr(0, width)
 
 class Progress extends stream.Transform
     constructor: (options) ->
@@ -111,37 +44,23 @@ class Progress extends stream.Transform
         @content_length = 0
         @cumulative_length = 0
         @on 'end', =>
-            excursion (cb) =>
-                charm.position(@bar.x, @bar.y)
-                charm.erase('line')
-                @bar.after = "] #{pad right:@id, width:4, padding:'0'} #{@title.substring 0, @screen_width - 26}"
-                @bar.solid =
-                    background: 'white'
-                    foreground: 'black'
-                    text: '='
-                @bar.draw(@bar.width, '')
-                closeBar(@bar)
-                cb()
+            process.stdout.write("\r#{@status()}\n")
 
-    drop: (cb) =>
-        bar_options =
-            width: 16
-            before: '['
-            after: "] #{pad right:@id, width:4, padding:'0'} #{pad left:@title, width:@screen_width - 42}"
-            text: '='
-        multi.drop bar_options, (@bar) =>
-            write('\n')
-            charm.erase('line')
-            cb?()
+    status: =>
+        if @cumulative_length < @content_length
+            progress = " (#{toMegs @cumulative_length} of #{toMegs @content_length}M)"
+        else
+            progress = ''
+        gauge = pad width:Math.round(@cumulative_length / @content_length * 10), padding:'='
+        "[#{pad left:gauge, width:10}] #{pad right:@id, width:4, padding:'0'} #{pad left:@title, width:@screen_width - 19 - progress.length}#{progress}"
 
     _transform: (chunk, encoding, cb) =>
         @cumulative_length += chunk.length
         if @content_length > 0
-            n = toMegs(@cumulative_length)
-            d = toMegs(@content_length)
-            if new Date().getTime() - (@last_update or 0) > 100
-                @bar?.ratio(n, d, "(#{n} of #{d}M)")
-                @last_update = new Date().getTime()
+            next_status = @status()
+            if @last_status isnt next_status
+                process.stdout.write("\r#{next_status}")
+                @last_status = next_status
         @push(chunk)
         cb()
 
@@ -161,11 +80,11 @@ class Talk
                 @title = @title.replace(/\s*\|.*/, '')
                 @event_name = document.getElementsByClassName('event-name')?[0]?.textContent.trim() or @default_event
                 for script in document.getElementsByTagName('script')
-                    if script.textContent.match(/talkDetails/)
-                        # slighly scary way to parse talkDetails from JavaScript
-                        eval(script.textContent)
-                        { mediaSlug } = talkDetails
-                        @media_slug = mediaSlug
+                    if script.textContent.match(/^q\("talkPage.init",/)
+                        # slighly scary way to parse talk details from JavaScript
+                        { talks } = eval("function q(a,b){return b;}" + script.textContent)
+                        { high } = talks[0].nativeDownloads
+                        @media_slug = high.match(/\/talks\/(.*?)(?:-480p)?\.mp4/)[1]
                         break
                 cb?(false)
 
@@ -189,22 +108,17 @@ class Talk
             (req, cb) =>
                 req.on 'response', (res) =>
                     progress.content_length = parseInt(res.headers['content-length'], 10)
-                    progress.drop =>
-                        cb(false, res)
-                req.on 'error', (err) ->
-                    console.log "error: #{err}"
-                    process.exit 1
+                req.on 'error', cb
                 progress = new Progress({@id, @title})
-                req.pipe(progress).pipe(fs.createWriteStream(@dest_path))
-            (res, cb) =>
-                res.on 'error', (err) ->
-                    console.log "error: #{err}"
-                    process.exit 1
-                res.on('end', cb)
+                req.pipe(progress).pipe(fs.createWriteStream("#{@dest_path}.new"))
+                    .on 'finish', cb
+                    .on 'error', cb
+            (cb) =>
+                fs.rename("#{@dest_path}.new", @dest_path, cb)
         ], (err) =>
             if err
-                write("#{err}\n")
-                charm.erase('line')
+                process.stdout.write("\n")
+                process.stderr.write("#{err}\n")
             cb?(err)
 
 download = async.queue (task, cb) ->
